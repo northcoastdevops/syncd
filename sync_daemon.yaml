@@ -1,0 +1,6 @@
+   directories:
+     - /Users/lou/git
+     - /Users/lou/.config
+   remote_dir: /path/to/remote/directory
+   remote_host: user@remote-host
+   rsync_options: "-az --delete"
