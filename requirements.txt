@@ -1,0 +1,4 @@
+# Required packages for sync_daemon
+watchdog
+pyyaml
+python-daemon

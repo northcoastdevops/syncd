@@ -1,6 +1,21 @@
-   directories:
-     - /Users/lou/git
-     - /Users/lou/.config
-   remote_dir: /path/to/remote/directory
-   remote_host: user@remote-host
-   rsync_options: "-az --delete"
+hosts:
+  - host: user@host1.example.com
+    directories:
+      - path: /path/to/sync1
+        exclude_patterns:
+          - "*.tmp"
+          - ".git/*"
+      - path: /path/to/sync2
+        exclude_patterns:
+          - "*.log"
+  - host: user@host2.example.com
+    directories:
+      - path: /path/to/sync1
+      - path: /path/to/sync2
+rsync_options: "-az --delete"
+poll_interval: 300  # 5 minutes
+consistency_check_interval: 3600  # 1 hour
+log_level: info
+daemon: true
+pid_file: /var/run/sync_daemon.pid
+db_path: /var/lib/sync_daemon/inventory.db
