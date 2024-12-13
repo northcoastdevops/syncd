@@ -1,21 +1,27 @@
 hosts:
-  - host: user@host1.example.com
+  - host: lou@imac.internal
     directories:
-      - path: /path/to/sync1
+      - path: /Users/lou/git
         exclude_patterns:
           - "*.tmp"
           - ".git/*"
-      - path: /path/to/sync2
+      - path: /Users/lou/.config/lib
         exclude_patterns:
-          - "*.log"
-  - host: user@host2.example.com
+          - "*.git/*"
+  - host: lou@macbookair.internal
     directories:
-      - path: /path/to/sync1
-      - path: /path/to/sync2
+      - path: /Users/lou/git
+        exclude_patterns:
+          - "*.tmp"
+          - ".git/*"
+      - path: /Users/lou/.config/lib
+        exclude_patterns:
+          - "*.git/*"
 rsync_options: "-az --delete"
 poll_interval: 300  # 5 minutes
 consistency_check_interval: 3600  # 1 hour
 log_level: info
 daemon: true
-pid_file: /var/run/sync_daemon.pid
-db_path: /var/lib/sync_daemon/inventory.db
+pid_file: /Users/lou/.sync_daemon/sync_daemon.pid
+db_path: /Users/lou/.sync_daemon/inventory.db
+log_file: /Users/lou/.sync_daemon/sync_daemon.log
