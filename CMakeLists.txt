@@ -54,10 +54,7 @@ if(APPLE)
         pthread
         cxxopts::cxxopts
     )
-    install(TARGETS sync_daemon RUNTIME DESTINATION bin)
-endif()
-
-if(UNIX AND NOT APPLE)
+else()
     # Linux-specific packages
     find_package(SQLite3 REQUIRED)
     
@@ -76,12 +73,12 @@ if(UNIX AND NOT APPLE)
         message(FATAL_ERROR "xxHash library not found. Please install libxxhash-dev")
     endif()
     
-    add_executable(sync_daemon_linux sync_daemon_linux.cpp)
-    target_include_directories(sync_daemon_linux PRIVATE ${XXHASH_INCLUDE_DIR})
-    target_compile_definitions(sync_daemon_linux PRIVATE
+    add_executable(sync_daemon sync_daemon.cpp)
+    target_include_directories(sync_daemon PRIVATE ${XXHASH_INCLUDE_DIR})
+    target_compile_definitions(sync_daemon PRIVATE
         USE_STD_FILESYSTEM=1
     )
-    target_link_libraries(sync_daemon_linux
+    target_link_libraries(sync_daemon
         PRIVATE
         yaml-cpp
         spdlog::spdlog
@@ -91,5 +88,6 @@ if(UNIX AND NOT APPLE)
         pthread
         cxxopts::cxxopts
     )
-    install(TARGETS sync_daemon_linux RUNTIME DESTINATION bin)
 endif()
+
+install(TARGETS sync_daemon RUNTIME DESTINATION bin)
