@@ -34,14 +34,14 @@ endif()
 # Platform specific configuration
 if(APPLE)
     # Set Objective-C++ as the compiler for .cpp files on macOS
-    set_source_files_properties(sync_daemon.cpp PROPERTIES 
+    set_source_files_properties(syncd.cpp PROPERTIES 
         COMPILE_FLAGS "-x objective-c++ -Wno-deprecated-declarations"
     )
     
     find_library(CORE_SERVICES CoreServices REQUIRED)
     find_library(FOUNDATION Foundation REQUIRED)
     
-    add_executable(sync_daemon sync_daemon.cpp)
+    add_executable(sync_daemon syncd.cpp)
     target_compile_definitions(sync_daemon PRIVATE
         USE_STD_FILESYSTEM=1
     )
@@ -73,7 +73,7 @@ else()
         message(FATAL_ERROR "xxHash library not found. Please install libxxhash-dev")
     endif()
     
-    add_executable(sync_daemon sync_daemon.cpp)
+    add_executable(sync_daemon syncd.cpp)
     target_include_directories(sync_daemon PRIVATE ${XXHASH_INCLUDE_DIR})
     target_compile_definitions(sync_daemon PRIVATE
         USE_STD_FILESYSTEM=1

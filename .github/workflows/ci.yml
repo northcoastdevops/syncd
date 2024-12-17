@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [ published ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install Dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew install cmake yaml-cpp spdlog cxxopts unison
+
+    - name: Install Dependencies (Ubuntu)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake libyaml-cpp-dev libspdlog-dev unison xxhash libxxhash-dev nlohmann-json3-dev
+
+    - name: Configure CMake
+      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build
+      run: cmake --build ${{github.workspace}}/build --config Release
+
+    - name: Test
+      working-directory: ${{github.workspace}}/build
+      run: |
+        ./sync_daemon --help
+        ../syncdctl --help
+
+  release:
+    needs: build
+    if: github.event_name == 'release' && github.event.action == 'published'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+      
+    - name: Create Archive
+      run: |
+        tar -czf syncd-${{ github.event.release.tag_name }}.tar.gz \
+          --exclude='.git*' --exclude='build' --exclude='.vscode' \
+          --transform 's,^,syncd-${{ github.event.release.tag_name }}\/,' \
+          *
+
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./syncd-${{ github.event.release.tag_name }}.tar.gz
+        asset_name: syncd-${{ github.event.release.tag_name }}.tar.gz
+        asset_content_type: application/gzip
+
+    - name: Update Homebrew Formula
+      env:
+        GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      run: |
+        # Calculate SHA256
+        SHA256=$(shasum -a 256 syncd-${{ github.event.release.tag_name }}.tar.gz | cut -d ' ' -f 1)
+        
+        # Clone tap repository
+        git clone https://oauth2:${GITHUB_TOKEN}@github.com/northcoastdevops/homebrew-tap.git
+        cd homebrew-tap
+        
+        # Update formula
+        sed -i "s|url.*|url \"https://github.com/northcoastdevops/syncd/archive/refs/tags/${{ github.event.release.tag_name }}.tar.gz\"|" Formula/syncd.rb
+        sed -i "s|sha256.*|sha256 \"${SHA256}\"|" Formula/syncd.rb
+        
+        # Commit and push
+        git config user.name "GitHub Actions"
+        git config user.email "actions@github.com"
+        git add Formula/syncd.rb
+        git commit -m "Update syncd to ${{ github.event.release.tag_name }}"
+        git push 

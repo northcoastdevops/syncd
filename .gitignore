@@ -1,3 +1,38 @@
-build
-.vscode
-.venv
+# Build directories
+build/
+Debug/
+Release/
+*.o
+*.obj
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# CMake files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+
+# macOS files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Logs
+*.log
+
+# Config backups
+*.yaml.bak
+*.yml.bak
+
+# Binary files
+syncd
+sync_daemon
+*.exe
+*.dll
+*.so
+*.dylib

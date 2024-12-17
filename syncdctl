@@ -1,0 +1,314 @@
+#!/bin/bash
+
+# Configuration
+SYSTEM_CONFIG="/etc/syncd/config.yaml"
+USER_CONFIG="$HOME/.config/syncd/config.yaml"
+DEFAULT_PID_FILE="/var/run/syncd.pid"
+DEFAULT_LOG_FILE="/var/log/syncd.log"
+DAEMON_BIN="syncd"
+
+# Function to get effective config file
+get_config_file() {
+    local explicit_config="$1"
+    
+    # If explicit config is provided, use it
+    if [ -n "$explicit_config" ]; then
+        if [ -f "$explicit_config" ]; then
+            echo "$explicit_config"
+            return 0
+        else
+            echo "Error: Specified config file not found: $explicit_config" >&2
+            return 1
+        fi
+    fi
+    
+    # Check system config first (takes priority)
+    if [ -f "$SYSTEM_CONFIG" ]; then
+        echo "$SYSTEM_CONFIG"
+        return 0
+    fi
+    
+    # Fall back to user config
+    if [ -f "$USER_CONFIG" ]; then
+        echo "$USER_CONFIG"
+        return 0
+    fi
+    
+    # No config found
+    echo "Error: No configuration file found. Looked in:" >&2
+    echo "  - $SYSTEM_CONFIG (system-wide)" >&2
+    echo "  - $USER_CONFIG (user-specific)" >&2
+    return 1
+}
+
+# Function to check if daemon is running
+check_status() {
+    local pid_file="$1"
+    if [ -f "$pid_file" ]; then
+        local pid=$(cat "$pid_file")
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "syncd is running (PID: $pid)"
+            return 0
+        else
+            echo "syncd is not running (stale PID file exists)"
+            return 1
+        fi
+    else
+        echo "syncd is not running"
+        return 1
+    fi
+}
+
+# Function to start the daemon
+start_daemon() {
+    local config_file="$1"
+    local pid_file="$2"
+    
+    # Check if already running
+    if check_status "$pid_file" >/dev/null; then
+        echo "syncd is already running"
+        return 1
+    fi
+    
+    # Get effective config file
+    local effective_config
+    effective_config=$(get_config_file "$config_file") || return 1
+    
+    # Start the daemon
+    echo "Starting syncd..."
+    echo "Using configuration from: $effective_config"
+    $DAEMON_BIN -c "$effective_config" -d -p "$pid_file"
+    
+    # Verify it started
+    sleep 1
+    if check_status "$pid_file" >/dev/null; then
+        echo "syncd started successfully"
+        return 0
+    else
+        echo "Error: Failed to start syncd"
+        return 1
+    fi
+}
+
+# Function to stop the daemon
+stop_daemon() {
+    local pid_file="$1"
+    if [ -f "$pid_file" ]; then
+        local pid=$(cat "$pid_file")
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "Stopping syncd..."
+            kill "$pid"
+            
+            # Wait for process to stop
+            local count=0
+            while kill -0 "$pid" 2>/dev/null && [ $count -lt 30 ]; do
+                sleep 1
+                count=$((count + 1))
+            done
+            
+            if kill -0 "$pid" 2>/dev/null; then
+                echo "Warning: Daemon did not stop gracefully, sending SIGKILL..."
+                kill -9 "$pid"
+                sleep 1
+            fi
+            
+            rm -f "$pid_file"
+            echo "syncd stopped"
+            return 0
+        else
+            echo "syncd is not running (removing stale PID file)"
+            rm -f "$pid_file"
+            return 0
+        fi
+    else
+        echo "syncd is not running"
+        return 0
+    fi
+}
+
+# Function to restart the daemon
+restart_daemon() {
+    local config_file="$1"
+    local pid_file="$2"
+    
+    stop_daemon "$pid_file"
+    sleep 1
+    start_daemon "$config_file" "$pid_file"
+}
+
+# Function to stream logs
+stream_logs() {
+    local config_file="$1"
+    local log_file="$DEFAULT_LOG_FILE"
+    
+    # Get effective config file
+    local effective_config
+    effective_config=$(get_config_file "$config_file") || return 1
+    
+    # Try to get log file from config if it exists
+    if [ -f "$effective_config" ]; then
+        local config_log_file=$(grep "^log_file:" "$effective_config" | awk \'{print $2}\' | tr -d \'"'"'"')
+        if [ -n "$config_log_file" ]; then
+            log_file="$config_log_file"
+        fi
+    fi
+    
+    if [ -f "$log_file" ]; then
+        echo "Streaming logs from $log_file..."
+        tail -F "$log_file"
+    else
+        echo "Error: Log file not found: $log_file"
+        return 1
+    fi
+}
+
+# Function to check config file
+check_config() {
+    local config_file="$1"
+    
+    # If checking a specific file
+    if [ -n "$config_file" ]; then
+        if [ ! -f "$config_file" ]; then
+            echo "Error: Config file not found: $config_file"
+            return 1
+        fi
+        echo "Checking configuration file: $config_file"
+        $DAEMON_BIN -c "$config_file" --check-config
+        local status=$?
+        if [ $status -eq 0 ]; then
+            echo "Configuration file is valid"
+        else
+            echo "Configuration file contains errors"
+        fi
+        return $status
+    fi
+    
+    # Check all available configs
+    local has_error=0
+    
+    if [ -f "$SYSTEM_CONFIG" ]; then
+        echo "Checking system configuration: $SYSTEM_CONFIG"
+        if $DAEMON_BIN -c "$SYSTEM_CONFIG" --check-config; then
+            echo "System configuration is valid"
+            echo
+        else
+            echo "System configuration contains errors"
+            echo
+            has_error=1
+        fi
+    fi
+    
+    if [ -f "$USER_CONFIG" ]; then
+        echo "Checking user configuration: $USER_CONFIG"
+        if $DAEMON_BIN -c "$USER_CONFIG" --check-config; then
+            echo "User configuration is valid"
+            echo
+        else
+            echo "User configuration contains errors"
+            echo
+            has_error=1
+        fi
+    fi
+    
+    if [ ! -f "$SYSTEM_CONFIG" ] && [ ! -f "$USER_CONFIG" ]; then
+        echo "No configuration files found"
+        echo "Looked in:"
+        echo "  - $SYSTEM_CONFIG (system-wide)"
+        echo "  - $USER_CONFIG (user-specific)"
+        return 1
+    fi
+    
+    return $has_error
+}
+
+# Function to show help
+show_help() {
+    echo "syncdctl - Control the syncd file synchronization daemon"
+    echo
+    echo "Usage: syncdctl [-c config_file] [-p pid_file] COMMAND"
+    echo
+    echo "Commands:"
+    echo "  start         Start the daemon"
+    echo "  stop          Stop the daemon"
+    echo "  restart       Restart the daemon"
+    echo "  status        Show daemon status"
+    echo "  logs          Stream daemon logs"
+    echo "  check-config  Check configuration file(s) for errors"
+    echo "                If no file specified, checks all available configs"
+    echo "  help          Show this help message"
+    echo
+    echo "Options:"
+    echo "  -c, --config    Config file (default: auto-detect)"
+    echo "  -p, --pid-file  PID file (default: $DEFAULT_PID_FILE)"
+    echo "  -h, --help      Show this help message"
+    echo
+    echo "Configuration files are searched in this order:"
+    echo "  1. Explicitly specified file (-c option)"
+    echo "  2. $SYSTEM_CONFIG (system-wide)"
+    echo "  3. $USER_CONFIG (user-specific)"
+    echo
+    echo "Examples:"
+    echo "  syncdctl start                    # Start daemon with default config"
+    echo "  syncdctl -c myconfig.yaml start   # Start with specific config"
+    echo "  syncdctl status                   # Check daemon status"
+    echo "  syncdctl logs                     # Stream daemon logs"
+}
+
+# Parse command line arguments
+CONFIG_FILE=""
+PID_FILE="$DEFAULT_PID_FILE"
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -c|--config)
+            CONFIG_FILE="$2"
+            shift 2
+            ;;
+        -p|--pid-file)
+            PID_FILE="$2"
+            shift 2
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+# Get the command (first non-option argument)
+CMD="${1:-help}"
+
+# Execute the requested command
+case "$CMD" in
+    start)
+        start_daemon "$CONFIG_FILE" "$PID_FILE"
+        ;;
+    stop)
+        stop_daemon "$PID_FILE"
+        ;;
+    restart)
+        restart_daemon "$CONFIG_FILE" "$PID_FILE"
+        ;;
+    status)
+        check_status "$PID_FILE"
+        ;;
+    logs)
+        stream_logs "$CONFIG_FILE"
+        ;;
+    check-config)
+        check_config "$2"
+        ;;
+    help)
+        show_help
+        exit 0
+        ;;
+    *)
+        echo "Error: Unknown command '$CMD'" >&2
+        echo
+        show_help
+        exit 1
+        ;;
+esac 

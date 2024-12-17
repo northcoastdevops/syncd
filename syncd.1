@@ -1,0 +1,250 @@
+.TH SYNCD 1 "2024" "Version 1.0" "User Commands"
+
+.SH NAME
+syncd \- bidirectional file synchronization daemon using Unison
+
+.SH SYNOPSIS
+.B syncd
+[\fB\-c\fR \fIconfig\fR]
+[\fB\-d\fR]
+[\fB\-n\fR]
+[\fB\-l\fR \fIlog-level\fR]
+[\fB\-p\fR \fIpid-file\fR]
+[\fB\-h\fR]
+
+.SH DESCRIPTION
+.B syncd
+is a daemon that maintains bidirectional file synchronization between multiple hosts using Unison.
+It supports both event-based (real-time) and batch (periodic) synchronization modes.
+
+.SH DAEMON CONTROL
+The daemon is controlled using the
+.B syncdctl
+command:
+
+.TP
+.B syncdctl start
+Start the daemon
+
+.TP
+.B syncdctl stop
+Stop the daemon
+
+.TP
+.B syncdctl restart
+Restart the daemon
+
+.TP
+.B syncdctl status
+Show daemon status
+
+.TP
+.B syncdctl logs
+Stream daemon logs
+
+.TP
+.B syncdctl check-config [\fIconfig-file\fR]
+Check configuration file(s) for errors. If no file is specified, checks all available configs.
+
+.PP
+The control command accepts these options:
+.TP
+.BR \-c ", " \-\-config =\fIFILE\fR
+Use specified config file instead of auto-detecting
+
+.TP
+.BR \-p ", " \-\-pid-file =\fIFILE\fR
+Use specified PID file (default: /var/run/syncd.pid)
+
+.SH CONFIGURATION
+The configuration file uses YAML format. Files are searched in this order:
+
+.IP 1. 4
+Explicitly specified file (via -c option)
+.IP 2. 4
+/etc/syncd/config.yaml (system-wide configuration)
+.IP 3. 4
+$HOME/.config/syncd/config.yaml (user-specific configuration)
+
+.PP
+The system-wide configuration takes precedence over user configuration when both exist.
+This allows administrators to enforce certain settings while still allowing users to
+have their own sync configurations when no system-wide configuration exists.
+
+.SS Global Settings
+.TP
+.B daemon: \fIboolean\fR
+Run as daemon in background (default: false)
+
+.TP
+.B log_level: \fIstring\fR
+Logging level: trace, debug, info, warn, error (default: info)
+
+.TP
+.B log_file: \fIstring\fR
+Log file path (if not set, logs to console only)
+
+.TP
+.B pid_file: \fIstring\fR
+Process ID file location (default: /var/run/syncd.pid)
+
+.TP
+.B host_check_interval: \fIinteger\fR
+Host connectivity check interval in seconds (default: 300)
+
+.TP
+.B consistency_check_interval: \fIinteger\fR
+Full consistency check interval in seconds (default: 3600)
+
+.TP
+.B noop: \fIboolean\fR
+Dry-run mode (default: false)
+
+.SS Host Groups Configuration
+Each host group defines a set of hosts that should be kept in sync with each other.
+When duplicate host groups exist between system and user configurations, the system
+configuration takes precedence.
+
+Required fields:
+.TP
+.B hosts
+List of hostnames (at least one required)
+
+.TP
+.B directories
+List of directory configurations (at least one required)
+
+.SS Directory Configuration
+Each directory in a host group requires:
+
+.TP
+.B local
+Local directory path
+
+.TP
+.B remote
+Remote directory path
+
+Optional fields:
+.TP
+.B sync_type
+'batch' (default) or 'event'
+
+.TP
+.B batch_interval
+Sync interval for batch mode in seconds (default: 300)
+
+.TP
+.B exclude
+List of patterns to exclude from sync
+
+.SH SYNC TYPES
+.TP
+.B batch
+Default mode. Changes are synced periodically based on batch_interval.
+Good for large directories or frequent changes.
+
+.TP
+.B event
+Real-time sync with a small batching window (2 seconds).
+Good for immediate sync needs or development work.
+
+.SH FILES
+.TP
+.I /etc/syncd/config.yaml
+System-wide configuration file (highest priority)
+
+.TP
+.I ~/.config/syncd/config.yaml
+User-specific configuration file (used when no system config exists)
+
+.TP
+.I /var/run/syncd.pid
+Default PID file location
+
+.TP
+.I /var/log/syncd.log
+Default log file location
+
+.SH REQUIREMENTS
+.IP \[bu] 2
+Unison must be installed on all hosts
+.IP \[bu]
+SSH keys must be properly configured
+.IP \[bu]
+Remote paths must be accessible to the SSH user
+.IP \[bu]
+Log directory must be writable if log_file is specified
+.IP \[bu]
+PID directory must be writable if running as daemon
+
+.SH EXAMPLES
+.SS Basic Configuration
+.nf
+host_groups:
+  - hosts:
+      - "user@server1.example.com"
+      - "user@server2.example.com"
+    directories:
+      - local: "/path/to/data"
+        remote: "/remote/data"
+        exclude:
+          - "*.tmp"
+.fi
+
+.SS Mixed Sync Types
+.nf
+host_groups:
+  - hosts:
+      - "user@dev1.example.com"
+      - "user@dev2.example.com"
+    directories:
+      - local: "/path/to/project"
+        remote: "/remote/project"
+        sync_type: event
+      - local: "/path/to/logs"
+        remote: "/remote/logs"
+        sync_type: batch
+        batch_interval: 1800
+.fi
+
+.SS Command Examples
+.nf
+# Start daemon with auto-detected config
+syncdctl start
+
+# Start with specific config
+syncdctl -c /path/to/config.yaml start
+
+# Check specific config file
+syncdctl check-config /path/to/config.yaml
+
+# Check all available configs
+syncdctl check-config
+
+# Stream logs
+syncdctl logs
+.fi
+
+.SH EXIT STATUS
+.TP
+.B 0
+Success
+.TP
+.B 1
+General error
+.TP
+.B 2
+Configuration error
+
+.SH BUGS
+Report bugs to: https://github.com/yourusername/syncd/issues
+
+.SH AUTHOR
+Your Name <your.email@example.com>
+
+.SH SEE ALSO
+.BR syncdctl (1),
+.BR unison (1),
+.BR ssh (1),
+.BR rsync (1) 
