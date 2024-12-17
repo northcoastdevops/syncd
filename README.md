@@ -16,24 +16,24 @@ A file synchronization daemon with real-time and batch sync capabilities.
 
 ### Using Homebrew (recommended)
 
-'''bash
+```bash
 brew tap northcoastdevops/tap
 brew install syncd
-'''
+```
 
 ### Manual Installation
 
 From source:
-'''bash
+```bash
 git clone https://github.com/northcoastdevops/syncd.git
 cd syncd
 ./install.sh
-'''
+```
 
 For user-specific installation:
-'''bash
+```bash
 ./install.sh --user
-'''
+```
 
 ## Configuration
 
@@ -42,7 +42,7 @@ The default configuration file is installed at:
 - User-specific: `~/.config/syncd/config.yaml`
 
 Example configuration:
-'''yaml
+```yaml
 # Host groups define sets of hosts that should be kept in sync with each other
 host_groups:
   - hosts:
@@ -68,60 +68,60 @@ noop: false
 # Advanced Settings
 host_check_interval: 300
 consistency_check_interval: 3600
-'''
+```
 
 ## Usage
 
 ### Basic Commands
 
 1. Start the daemon:
-   '''bash
+   ```bash
    syncdctl start
-   '''
+   ```
 
 2. Check status:
-   '''bash
+   ```bash
    syncdctl status
-   '''
+   ```
 
 3. View logs:
-   '''bash
+   ```bash
    syncdctl logs
-   '''
+   ```
 
 4. Stop the daemon:
-   '''bash
+   ```bash
    syncdctl stop
-   '''
+   ```
 
 ### Using with Homebrew Services
 
 Start and enable at login:
-'''bash
+```bash
 brew services start syncd
-'''
+```
 
 Stop service:
-'''bash
+```bash
 brew services stop syncd
-'''
+```
 
 Restart service:
-'''bash
+```bash
 brew services restart syncd
-'''
+```
 
 ### Additional Commands
 
 Check configuration:
-'''bash
+```bash
 syncdctl check-config
-'''
+```
 
 Show help:
-'''bash
+```bash
 syncdctl --help
-'''
+```
 
 ## Requirements
 
