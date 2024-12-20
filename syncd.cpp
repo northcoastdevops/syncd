@@ -118,8 +118,7 @@ enum class SyncType {
 
 // Common structures for both platforms
 struct RemoteDirectory {
-    std::string local_dir;
-    std::string remote_dir;
+    std::string path;
     std::vector<std::string> exclude_patterns;
     SyncType sync_type{SyncType::BATCH};  // Default to batch-based
     std::chrono::seconds batch_interval{300};  // Default 5 minutes for batch mode
@@ -175,7 +174,7 @@ struct Config {
 // Platform-specific structures
 #ifdef __APPLE__
 struct FSEventContext {
-    std::string local_dir;
+    std::string path;
     std::mutex mutex;
     std::condition_variable cv;
     std::set<std::string> changed_paths;
@@ -186,7 +185,7 @@ struct FSEventContext {
     std::chrono::seconds batch_interval;
 
     explicit FSEventContext(const std::string& dir, SyncType st, std::chrono::seconds bi) 
-        : local_dir(dir), sync_type(st), batch_interval(bi) {}
+        : path(dir), sync_type(st), batch_interval(bi) {}
 };
 #else
 struct FileInfo {
@@ -341,6 +340,8 @@ void manage_host_connectivity(HostGroup& host_group, const std::string& host);
 void sync_to_remote(const RemoteDirectory& dir, HostGroup& host_group, 
                    const std::string& unison_options, bool noop);
 Config parse_arguments(int argc, char* argv[]);
+std::string expand_path(const std::string& path);
+std::string resolve_path(const std::string& path, const std::string& config_path);
 
 #ifdef __APPLE__
 void FSEventsCallback(ConstFSEventStreamRef streamRef,
@@ -396,17 +397,17 @@ void monitor_directories(HostGroup& host_group, const std::string& unison_option
     monitor_threads.reserve(host_group.directories.size());
     
     for (const auto& dir : host_group.directories) {
-        if (!fs::exists(dir.local_dir)) {
-            spdlog::error("Directory does not exist: {}", dir.local_dir);
+        if (!fs::exists(dir.path)) {
+            spdlog::error("Directory does not exist: {}", dir.path);
             continue;
         }
         
         monitor_threads.emplace_back([&]() {
             try {
-                FSEventContext context{dir.local_dir, dir.sync_type, dir.batch_interval};
+                FSEventContext context{dir.path, dir.sync_type, dir.batch_interval};
                 context.last_sync = std::chrono::steady_clock::now();
                 
-                CFStringRef path = CFStringCreateWithCString(nullptr, dir.local_dir.c_str(),
+                CFStringRef path = CFStringCreateWithCString(nullptr, dir.path.c_str(),
                                                            kCFStringEncodingUTF8);
                 if (!path) {
                     throw std::runtime_error("Failed to create CFString for path");
@@ -518,8 +519,8 @@ void monitor_directories(HostGroup& host_group, const std::string& unison_option
     monitor_threads.reserve(host_group.directories.size());
     
     for (const auto& dir : host_group.directories) {
-        if (!fs::exists(dir.local_dir)) {
-            spdlog::error("Directory does not exist: {}", dir.local_dir);
+        if (!fs::exists(dir.path)) {
+            spdlog::error("Directory does not exist: {}", dir.path);
             continue;
         }
         
@@ -562,7 +563,7 @@ void monitor_directories(HostGroup& host_group, const std::string& unison_option
                 };
                 
                 // Add initial watches
-                add_watches(dir.local_dir);
+                add_watches(dir.path);
                 
                 const int BUF_LEN = (10 * (sizeof(struct inotify_event) + NAME_MAX + 1));
                 std::vector<char> buffer(BUF_LEN);
@@ -681,8 +682,8 @@ void sync_to_remote(const RemoteDirectory& dir, HostGroup& host_group,
             }
 
             // Construct Unison command for this pair of hosts
-            std::string cmd = "unison " + dir.local_dir + " ssh://" + target_host + 
-                            "/" + dir.remote_dir + 
+            std::string cmd = "unison " + dir.path + " ssh://" + target_host + 
+                            "/" + dir.path + 
                             " " + unison_options +
                             ignore_opts;
             
@@ -690,11 +691,11 @@ void sync_to_remote(const RemoteDirectory& dir, HostGroup& host_group,
                 execute_unison(cmd, noop);
                 if (!noop) {
                     spdlog::info("Bidirectional sync completed successfully between {} and {}:{}",
-                                source_host, target_host, dir.remote_dir);
+                                source_host, target_host, dir.path);
                 }
             } catch (const std::exception& e) {
                 spdlog::error("Failed to sync between {} and {}:{}: {}", 
-                             source_host, target_host, dir.remote_dir, e.what());
+                             source_host, target_host, dir.path, e.what());
                 host_group.host_responsive[target_host] = false;
                 manage_host_connectivity(host_group, target_host);
             }
@@ -840,6 +841,15 @@ void signal_handler(int signum) {
     g_running = false;
 }
 
+std::string expand_path(const std::string& path) {
+    if (path.empty() || path[0] != '~') return path;
+    
+    const char* home = std::getenv("HOME");
+    if (!home) return path;
+    
+    return std::string(home) + path.substr(1);
+}
+
 void setup_logging(const Config& config) {
     try {
         // Create console sink with color support
@@ -851,18 +861,21 @@ void setup_logging(const Config& config) {
         // Set up file logging if configured
         if (!config.log_file.empty()) {
             try {
-                // Ensure log directory exists
-                auto log_path = fs::path(config.log_file);
+                // Expand ~ in path and ensure log directory exists
+                std::string expanded_log_file = expand_path(config.log_file);
+                auto log_path = fs::path(expanded_log_file);
                 fs::create_directories(log_path.parent_path());
                 
                 // Create rotating file sink
                 auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-                    config.log_file,
+                    expanded_log_file,
                     5 * 1024 * 1024,  // 5MB max file size
                     3                  // Keep 3 rotated files
                 );
                 file_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%t] %v");
                 sinks.push_back(file_sink);
+                
+                spdlog::info("Log file: {}", expanded_log_file);
             } catch (const std::exception& e) {
                 std::cerr << "Failed to initialize file logging: " << e.what() << std::endl;
                 std::cerr << "Continuing with console logging only" << std::endl;
@@ -893,10 +906,6 @@ void setup_logging(const Config& config) {
 #endif
         );
         
-        if (!config.log_file.empty()) {
-            spdlog::info("Log file: {}", config.log_file);
-        }
-        
     } catch (const spdlog::spdlog_ex& ex) {
         std::cerr << "Log initialization failed: " << ex.what() << std::endl;
         throw std::runtime_error("Failed to initialize logging: " + std::string(ex.what()));
@@ -906,11 +915,33 @@ void setup_logging(const Config& config) {
 void daemonize(Config& config) {
     spdlog::info("Daemonizing process");
     
+    // Create PID file directory if it doesn't exist
+    if (!config.pid_file.empty()) {
+        fs::path pid_path = fs::path(config.pid_file);
+        fs::path pid_dir = pid_path.parent_path();
+        if (!pid_dir.empty() && !fs::exists(pid_dir)) {
+            try {
+                fs::create_directories(pid_dir);
+            } catch (const std::exception& e) {
+                throw std::runtime_error("Failed to create PID file directory: " + std::string(e.what()));
+            }
+        }
+    }
+    
     pid_t pid = fork();
     if (pid < 0) {
         throw std::runtime_error("Failed to fork process");
     }
     if (pid > 0) {
+        // Write PID to file before parent exits
+        if (!config.pid_file.empty()) {
+            std::ofstream pid_file(config.pid_file);
+            if (pid_file) {
+                pid_file << pid;
+            } else {
+                throw std::runtime_error("Failed to write PID file: " + config.pid_file);
+            }
+        }
         exit(0);  // Parent exits
     }
     
@@ -935,6 +966,41 @@ void daemonize(Config& config) {
     }
 }
 
+void handle_uninstall(bool purge) {
+    const char* home = std::getenv("HOME");
+    if (!home) {
+        throw std::runtime_error("Could not determine home directory");
+    }
+
+    // Define paths
+    std::string bin_path = "/usr/local/bin/syncd";
+    std::string service_path = std::string(home) + "/.config/systemd/user/syncd.service";
+    std::string config_dir = std::string(home) + "/.config/syncd";
+
+    // Remove binary
+    if (fs::exists(bin_path)) {
+        fs::remove(bin_path);
+        std::cout << "Removed binary: " << bin_path << std::endl;
+    }
+
+    // Remove service file
+    if (fs::exists(service_path)) {
+        fs::remove(service_path);
+        std::cout << "Removed service file: " << service_path << std::endl;
+    }
+
+    if (purge) {
+        // Remove config directory and all contents
+        if (fs::exists(config_dir)) {
+            fs::remove_all(config_dir);
+            std::cout << "Removed configuration directory: " << config_dir << std::endl;
+        }
+        std::cout << "Syncd has been completely removed including configuration files" << std::endl;
+    } else {
+        std::cout << "Syncd has been uninstalled. Configuration files preserved in: " << config_dir << std::endl;
+    }
+}
+
 Config parse_arguments(int argc, char* argv[]) {
     Config config;
     
@@ -947,8 +1013,11 @@ Config parse_arguments(int argc, char* argv[]) {
             ("l,log-level", "Log level (trace, debug, info, warn, error)", 
              cxxopts::value<std::string>()->default_value("info"))
             ("log-file", "Log file path", cxxopts::value<std::string>())
-            ("pid-file", "PID file path", cxxopts::value<std::string>())
+            ("p,pid-file", "PID file path", cxxopts::value<std::string>())
             ("n,noop", "Dry-run mode", cxxopts::value<bool>()->default_value("false"))
+            ("uninstall", "Uninstall syncd application", cxxopts::value<bool>()->default_value("false"))
+            ("purge", "Remove all traces including configuration files when uninstalling", cxxopts::value<bool>()->default_value("false"))
+            ("check-config", "Check configuration file for errors", cxxopts::value<bool>()->default_value("false"))
             ("h,help", "Print usage");
 
         auto result = options.parse(argc, argv);
@@ -956,6 +1025,47 @@ Config parse_arguments(int argc, char* argv[]) {
         if (result.count("help")) {
             std::cout << options.help() << std::endl;
             exit(0);
+        }
+
+        // Handle uninstall command
+        if (result.count("uninstall")) {
+            bool purge = result.count("purge") > 0;
+            handle_uninstall(purge);
+            exit(0);
+        }
+
+        // Handle check-config command
+        if (result.count("check-config")) {
+            try {
+                // Try to load and parse the config file
+                YAML::Node yaml = YAML::LoadFile(result["config"].as<std::string>());
+                
+                // Basic validation
+                if (!yaml["host_groups"]) {
+                    throw std::runtime_error("Configuration must contain 'host_groups' section");
+                }
+
+                for (const auto& group : yaml["host_groups"]) {
+                    if (!group["hosts"] || !group["hosts"].IsSequence()) {
+                        throw std::runtime_error("Each host group must have a 'hosts' list");
+                    }
+                    if (!group["directories"] || !group["directories"].IsSequence()) {
+                        throw std::runtime_error("Each host group must have a 'directories' list");
+                    }
+
+                    for (const auto& dir : group["directories"]) {
+                        if (!dir["path"]) {
+                            throw std::runtime_error("Each directory must have a 'path' defined");
+                        }
+                    }
+                }
+
+                // Only print the message once and exit with success
+                exit(0);
+            } catch (const std::exception& e) {
+                std::cerr << "Configuration error: " << e.what() << std::endl;
+                exit(1);
+            }
         }
 
         if (!result.count("config")) {
@@ -978,6 +1088,7 @@ Config parse_arguments(int argc, char* argv[]) {
         // Load and parse YAML configuration
         YAML::Node yaml = YAML::LoadFile(config.config_path);
 
+        // Parse host groups
         if (!yaml["host_groups"]) {
             throw std::runtime_error("Configuration must contain 'host_groups' section");
         }
@@ -1003,12 +1114,11 @@ Config parse_arguments(int argc, char* argv[]) {
             for (const auto& dir : group["directories"]) {
                 RemoteDirectory remote_dir;
 
-                if (!dir["local"] || !dir["remote"]) {
-                    throw std::runtime_error("Each directory must have 'local' and 'remote' paths");
+                if (!dir["path"]) {
+                    throw std::runtime_error("Each directory must have a 'path' defined");
                 }
 
-                remote_dir.local_dir = dir["local"].as<std::string>();
-                remote_dir.remote_dir = dir["remote"].as<std::string>();
+                remote_dir.path = resolve_path(dir["path"].as<std::string>(), config.config_path);
 
                 // Parse optional settings
                 if (dir["sync_type"]) {
@@ -1052,6 +1162,16 @@ Config parse_arguments(int argc, char* argv[]) {
             );
         }
 
+        // If PID file wasn't set by command line, try to get it from config
+        if (config.pid_file.empty() && yaml["pid_file"]) {
+            config.pid_file = yaml["pid_file"].as<std::string>();
+        }
+
+        // If log file wasn't set by command line, try to get it from config
+        if (config.log_file.empty() && yaml["log_file"]) {
+            config.log_file = yaml["log_file"].as<std::string>();
+        }
+
         return config;
 
     } catch (const cxxopts::exceptions::parsing& e) {
@@ -1059,6 +1179,24 @@ Config parse_arguments(int argc, char* argv[]) {
     } catch (const YAML::Exception& e) {
         throw std::runtime_error("Error parsing configuration file: " + std::string(e.what()));
     }
+}
+
+std::string detect_user_shell() {
+    const char* shell = std::getenv("SHELL");
+    if (!shell) return "";
+    
+    std::string shell_path(shell);
+    if (shell_path.find("bash") != std::string::npos) return "bash";
+    if (shell_path.find("zsh") != std::string::npos) return "zsh";
+    if (shell_path.find("fish") != std::string::npos) return "fish";
+    return "";
+}
+
+std::string get_rc_file(const std::string& shell, const char* home) {
+    if (shell == "bash") return std::string(home) + "/.bashrc";
+    if (shell == "zsh") return std::string(home) + "/.zshrc";
+    if (shell == "fish") return std::string(home) + "/.config/fish/config.fish";
+    return "";
 }
 
 int main(int argc, char* argv[]) {
@@ -1070,7 +1208,7 @@ int main(int argc, char* argv[]) {
         
         // Parse arguments and load config
         Config config = parse_arguments(argc, argv);
-        
+
         // Now set up full logging with file
         setup_logging(config);
         
@@ -1125,4 +1263,18 @@ int main(int argc, char* argv[]) {
         spdlog::critical("Fatal error: {}", e.what());
         return 1;
     }
+}
+
+std::string resolve_path(const std::string& path, const std::string& config_path) {
+    // First expand any ~ in the path
+    std::string expanded = expand_path(path);
+    
+    // If path is absolute, return it as is
+    if (fs::path(expanded).is_absolute()) {
+        return expanded;
+    }
+    
+    // Make relative paths relative to the config file's directory
+    fs::path config_dir = fs::path(config_path).parent_path();
+    return (config_dir / expanded).string();
 }

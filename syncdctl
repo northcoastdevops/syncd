@@ -3,8 +3,8 @@
 # Configuration
 SYSTEM_CONFIG="/etc/syncd/config.yaml"
 USER_CONFIG="$HOME/.config/syncd/config.yaml"
-DEFAULT_PID_FILE="/var/run/syncd.pid"
-DEFAULT_LOG_FILE="/var/log/syncd.log"
+DEFAULT_PID_FILE="$HOME/.local/var/run/syncd.pid"
+DEFAULT_LOG_FILE="$HOME/.local/var/log/syncd.log"
 DAEMON_BIN="syncd"
 
 # Function to get effective config file
@@ -74,6 +74,10 @@ start_daemon() {
     local effective_config
     effective_config=$(get_config_file "$config_file") || return 1
     
+    # Create necessary directories
+    mkdir -p "$(dirname "$pid_file")"
+    mkdir -p "$(dirname "$DEFAULT_LOG_FILE")"
+    
     # Start the daemon
     echo "Starting syncd..."
     echo "Using configuration from: $effective_config"
@@ -97,24 +101,44 @@ stop_daemon() {
         local pid=$(cat "$pid_file")
         if kill -0 "$pid" 2>/dev/null; then
             echo "Stopping syncd..."
-            kill "$pid"
+            
+            # First try SIGTERM
+            kill -TERM "$pid" 2>/dev/null
             
             # Wait for process to stop
             local count=0
-            while kill -0 "$pid" 2>/dev/null && [ $count -lt 30 ]; do
+            while kill -0 "$pid" 2>/dev/null && [ $count -lt 10 ]; do
                 sleep 1
                 count=$((count + 1))
             done
             
+            # If still running, try SIGINT
             if kill -0 "$pid" 2>/dev/null; then
-                echo "Warning: Daemon did not stop gracefully, sending SIGKILL..."
-                kill -9 "$pid"
+                echo "Process still running, sending SIGINT..."
+                kill -INT "$pid" 2>/dev/null
+                count=0
+                while kill -0 "$pid" 2>/dev/null && [ $count -lt 5 ]; do
+                    sleep 1
+                    count=$((count + 1))
+                done
+            fi
+            
+            # If still running, use SIGKILL as last resort
+            if kill -0 "$pid" 2>/dev/null; then
+                echo "Process not responding, sending SIGKILL..."
+                kill -9 "$pid" 2>/dev/null
                 sleep 1
             fi
             
-            rm -f "$pid_file"
-            echo "syncd stopped"
-            return 0
+            # Verify process is gone
+            if kill -0 "$pid" 2>/dev/null; then
+                echo "Failed to stop syncd (PID: $pid)"
+                return 1
+            else
+                rm -f "$pid_file"
+                echo "syncd stopped"
+                return 0
+            fi
         else
             echo "syncd is not running (removing stale PID file)"
             rm -f "$pid_file"
@@ -123,6 +147,61 @@ stop_daemon() {
     else
         echo "syncd is not running"
         return 0
+    fi
+}
+
+# Function to handle uninstallation
+uninstall() {
+    local purge="$1"
+    local binary_path="/usr/local/bin/syncd"
+    local service_path="$HOME/.config/systemd/user/syncd.service"
+    local config_dir="$HOME/.config/syncd"
+    
+    # Stop the daemon if it's running
+    stop_daemon "$DEFAULT_PID_FILE"
+    
+    # Remove binary
+    if [ -f "$binary_path" ]; then
+        sudo rm -f "$binary_path"
+        echo "Removed binary: $binary_path"
+    fi
+    
+    # Remove service file
+    if [ -f "$service_path" ]; then
+        rm -f "$service_path"
+        echo "Removed service file: $service_path"
+    fi
+    
+    # Handle shell configuration
+    local shell_type=$(basename "$SHELL")
+    local rc_file=""
+    case "$shell_type" in
+        "bash") rc_file="$HOME/.bashrc" ;;
+        "zsh")  rc_file="$HOME/.zshrc" ;;
+        "fish") rc_file="$HOME/.config/fish/config.fish" ;;
+    esac
+    
+    if [ -n "$rc_file" ] && [ -f "$rc_file" ]; then
+        read -p "Would you like to remove syncd-related exports from your $shell_type configuration? [y/N]: " response
+        if [[ "$response" =~ ^[Yy] ]]; then
+            # Create backup
+            cp "$rc_file" "${rc_file}.bak"
+            # Remove syncd-related lines
+            sed -i.bak '/syncd/d' "$rc_file"
+            echo "Removed syncd configuration from $rc_file"
+            echo "Please run: source $rc_file"
+        fi
+    fi
+    
+    if [ "$purge" = "true" ]; then
+        # Remove config directory and all contents
+        if [ -d "$config_dir" ]; then
+            rm -rf "$config_dir"
+            echo "Removed configuration directory: $config_dir"
+        fi
+        echo "Syncd has been completely removed including configuration files"
+    else
+        echo "Syncd has been uninstalled. Configuration files preserved in: $config_dir"
     fi
 }
 
@@ -147,9 +226,10 @@ stream_logs() {
     
     # Try to get log file from config if it exists
     if [ -f "$effective_config" ]; then
-        local config_log_file=$(grep "^log_file:" "$effective_config" | awk \'{print $2}\' | tr -d \'"'"'"')
+        local config_log_file=$(grep "^log_file:" "$effective_config" | sed 's/^log_file:[[:space:]]*//;s/^["'"'"']//;s/["'"'"']$//')
         if [ -n "$config_log_file" ]; then
-            log_file="$config_log_file"
+            # Expand ~ to $HOME if present
+            log_file="${config_log_file/#\~/$HOME}"
         fi
     fi
     
@@ -235,6 +315,7 @@ show_help() {
     echo "  logs          Stream daemon logs"
     echo "  check-config  Check configuration file(s) for errors"
     echo "                If no file specified, checks all available configs"
+    echo "  uninstall     Uninstall syncd (use --purge to remove config files)"
     echo "  help          Show this help message"
     echo
     echo "Options:"
@@ -300,6 +381,16 @@ case "$CMD" in
         ;;
     check-config)
         check_config "$2"
+        ;;
+    uninstall)
+        purge_flag=false
+        for arg in "$@"; do
+            if [ "$arg" = "--purge" ]; then
+                purge_flag=true
+                break
+            fi
+        done
+        uninstall "$purge_flag"
         ;;
     help)
         show_help

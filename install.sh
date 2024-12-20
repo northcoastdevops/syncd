@@ -74,6 +74,9 @@ if [ $USER_INSTALL -eq 1 ]; then
     mkdir -p "$USER_CONFDIR"
 fi
 
+# Store the source directory
+SOURCEDIR="$(pwd)"
+
 # Build the project
 echo "Building project..."
 rm -rf build
@@ -85,41 +88,12 @@ make || exit 1
 # Install binaries
 echo "Installing binaries..."
 install -m 755 sync_daemon "$BINDIR/syncd"
-install -m 755 ../syncdctl "$BINDIR/syncdctl"
+install -m 755 "$SOURCEDIR/syncdctl" "$BINDIR/syncdctl"
 
-# Install default configuration
+# Install configuration
 echo "Installing configuration..."
 if [ ! -f "$SYSCONFDIR/config.yaml" ]; then
-    cat > "$SYSCONFDIR/config.yaml" << 'EOL'
-# Default syncd configuration
-# Modify this file according to your needs
-
-# Host groups define sets of hosts that should be kept in sync with each other
-host_groups:
-  - hosts:
-      - localhost  # Add remote hosts as needed
-
-    directories:
-      - local: ~/Documents/sync   # Change this to your sync directory
-        remote: ~/Documents/sync  # Change this to your remote sync path
-        sync_type: batch         # 'batch' or 'event'
-        batch_interval: 300      # Seconds between batch syncs
-        exclude:
-          - "*.tmp"
-          - ".git"
-          - "node_modules"
-
-# Global Settings
-unison_options: "-batch -prefer newer -times -perms 0 -auto -ui text"
-log_level: info
-log_file: ~/.local/var/log/syncd.log
-daemon: false
-noop: false
-
-# Advanced Settings
-host_check_interval: 300
-consistency_check_interval: 3600
-EOL
+    install -m 644 "$SOURCEDIR/syncd.yaml" "$SYSCONFDIR/config.yaml"
 fi
 
 # Create log directory
@@ -158,13 +132,48 @@ complete -F _syncdctl syncdctl
 EOL
 fi
 
+# Add shell detection function near the top:
+get_shell_rc() {
+    local shell_path="$SHELL"
+    local shell_name=$(basename "$shell_path")
+    
+    case "$shell_name" in
+        "bash")
+            echo "$HOME/.bashrc"
+            ;;
+        "zsh")
+            echo "$HOME/.zshrc"
+            ;;
+        "fish")
+            echo "$HOME/.config/fish/config.fish"
+            ;;
+        *)
+            echo ""
+            ;;
+    esac
+}
+
 echo
 echo "Installation complete!"
 echo
 echo "Next steps:"
 if [ $USER_INSTALL -eq 1 ]; then
-    echo "1. Add $BINDIR to your PATH if not already present:"
-    echo "   echo 'export PATH=\"\$PATH:$BINDIR\"' >> ~/.bashrc"
+    RC_FILE=$(get_shell_rc)
+    if [ -n "$RC_FILE" ]; then
+        echo "1. Add $BINDIR to your PATH if not already present:"
+        case "$(basename "$SHELL")" in
+            "fish")
+                echo "   fish_add_path $BINDIR"
+                ;;
+            *)
+                echo "   echo 'export PATH=\"\$PATH:$BINDIR\"' >> $RC_FILE"
+                ;;
+        esac
+        echo
+        echo "   Then run: source $RC_FILE"
+    else
+        echo "1. Add $BINDIR to your PATH"
+    fi
     echo
     echo "2. Edit your configuration file:"
     echo "   $USER_CONFDIR/config.yaml"

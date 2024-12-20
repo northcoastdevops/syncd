@@ -1,130 +1,59 @@
 # Sync Daemon Configuration
 #
-# This is a sample configuration file for the sync daemon.
-# 
+# This is the default configuration file for syncd.
+# Modify this file according to your needs.
+#
 # CONFIG FILE LOCATIONS (searched in order):
-# 1. ./sync_daemon.yaml (current directory)
-# 2. ~/.config/sync_daemon/config.yaml (user's config directory)
-# 3. /etc/sync_daemon/config.yaml (system-wide config)
-#
-# REQUIRED CONFIGURATION:
-# - host_groups: At least one group with hosts and directories
-#   - hosts: At least one host per group
-#   - directories: At least one directory per group with local and remote paths
-#
-# GLOBAL SETTINGS (all optional):
-# - daemon: false                    # Run as daemon in background
-# - log_level: "info"               # Logging levels: trace, debug, info, warn, error
-# - log_file: "/var/log/sync_daemon.log"  # Log file path (if not set, logs to console only)
-# - pid_file: "/var/run/sync_daemon.pid"  # Process ID file location
-# - host_check_interval: 300        # How often to check if hosts are responsive (seconds)
-# - consistency_check_interval: 3600 # Full consistency check interval (seconds)
-# - noop: false                     # Dry-run mode, don't actually sync
-#
-# DIRECTORY CONFIGURATION (per directory):
-# - local: "/path/to/dir"           # Required: Local directory path
-# - remote: "/remote/path"          # Required: Remote directory path
-# - sync_type: "batch"              # Optional: 'batch' (default) or 'event'
-# - batch_interval: 300             # Optional: Sync interval for batch mode (seconds)
-# - exclude: []                     # Optional: List of patterns to exclude
-#
-# UNISON OPTIONS:
-# Default options are provided below but can be overridden. Common options:
-# -batch              # Run without user interaction
-# -prefer newer       # Keep newest version on both sides
-# -times             # Preserve modification times
-# -perms 0           # Don't sync permissions
-# -auto              # Automatically accept actions
-# -ui text           # Use text UI
-# -fastcheck true    # Quick update detection
-# -confirmbigdel     # Confirm large deletes
-# -silent            # Reduce output verbosity
-# -ignore 'Pattern'  # Ignore patterns (auto-generated from exclude lists)
-#
-# SYNC TYPES:
-# 1. batch (default):
-#    - Changes are synced periodically based on batch_interval
-#    - Default interval is 300 seconds (5 minutes)
-#    - Good for: large directories, frequent changes, or limited resources
-#
-# 2. event:
-#    - Changes are synced in near real-time
-#    - Small batching window (2 seconds) to prevent excessive syncs
-#    - Good for: immediate sync needs, development work
-#
-# SECURITY NOTES:
-# - SSH keys must be properly configured for all hosts
-# - Unison must be installed on all hosts
-# - Remote paths must be accessible to the SSH user
-# - Log directory must be writable if log_file is specified
-# - PID directory must be writable if running as daemon
+# 1. Explicitly specified file (-c option)
+# 2. /etc/syncd/config.yaml (system-wide)
+# 3. ~/.config/syncd/config.yaml (user-specific)
 
-# Global settings
-daemon: false
-log_level: "info"
-log_file: "/var/log/sync_daemon.log"
-pid_file: "/var/run/sync_daemon.pid"
-host_check_interval: 300
-consistency_check_interval: 3600
-noop: false
-
-# Unison-specific options
-unison_options: >-
-  -batch
-  -prefer newer
-  -times
-  -perms 0
-  -auto
-  -ui text
-  -fastcheck true
-  -confirmbigdel false
-  -silent
-
-# Host groups configuration
+# Host groups define sets of hosts that should be kept in sync with each other
 host_groups:
-  # Example group 1: Real-time sync for development
+  # Example group 1: Development files with real-time sync
   - hosts:
-      - "user@dev1.example.com"
-      - "user@dev2.example.com"
+      - "user@dev1.example.com"     # Replace with your remote hosts
+      - "user@dev2.example.com"     # Add or remove hosts as needed
+    
     directories:
-      - local: "/path/to/project1"
-        remote: "/remote/project1"
-        sync_type: event
+      - path: "~/Projects/webapp"    # This path will be used on all hosts
+        sync_type: event            # Real-time sync for development
         exclude:
           - "*.tmp"
           - ".git"
           - "node_modules"
-          - "*.swp"
+          - "dist"
+          - "*.log"
+      
+      - path: "~/Documents/specs"    # Another directory in the same group
+        sync_type: batch            # Periodic sync for documents
+        batch_interval: 300         # Sync every 5 minutes
+        exclude:
+          - "~$*"                   # Exclude temporary Office files
           - ".DS_Store"
 
-  # Example group 2: Batch sync for documents
+  # Example group 2: Document sync with different hosts
   - hosts:
       - "user@docs1.example.com"
       - "user@docs2.example.com"
+    
     directories:
-      - local: "/path/to/documents"
-        remote: "/remote/documents"
-        batch_interval: 600
-        exclude:
-          - "*.bak"
-          - "~$*"
-
-  # Example group 3: Mixed sync types
-  - hosts:
-      - "user@server1.example.com"
-      - "user@server2.example.com"
-    directories:
-      # Directory with default settings (batch mode)
-      - local: "/path/to/logs"
-        remote: "/remote/logs"
-        exclude:
-          - "*.log"
-          - "tmp/*"
-      
-      # Directory with custom batch interval
-      - local: "/path/to/data"
-        remote: "/remote/data"
-        batch_interval: 1800
+      - path: "~/Documents/shared"
+        sync_type: batch
+        batch_interval: 600         # Sync every 10 minutes
         exclude:
           - "*.tmp"
-          - "cache/*"
+          - "*.bak"
+          - ".Trash"
+
+# Global Settings (all optional)
+unison_options: "-batch -prefer newer -times -perms 0 -auto -ui text -fastcheck true -silent"
+log_level: info       # Logging level: trace, debug, info, warn, error (default: info)
+log_file: ~/.local/var/log/syncd.log  # Log file path
+daemon: false         # Run as daemon (default: false)
+noop: false          # Dry-run mode (default: false)
+pid_file: ~/.local/var/run/syncd.pid  # PID file location
+
+# Advanced Settings (all optional)
+host_check_interval: 300            # Host connectivity check interval in seconds (default: 300)
+consistency_check_interval: 3600    # Full consistency check interval in seconds (default: 3600)
